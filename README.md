@@ -12,7 +12,7 @@
 
 **Standard Huffman coding when the threshold is `0`. A compact, tunable variant when it isn't.**
 
-[Features](#-features) · [How it works](#-how-it-works) · [Usage](#-usage) · [Example](#-example) · [Library](#-use-it-as-a-library) · [Limitations](#-notes-and-limitations)
+[Features](#-features) · [How it works](#-how-it-works) · [Usage](#-usage) · [Example](#-example) · [Library](#-use-it-as-a-library) · [Limitations](#-notes-and-limitations) · [Team](#-team)
 
 </div>
 
@@ -182,6 +182,18 @@ print(coder.decode(bits))         # BEE$BEE$BEAD
 - Decoding scans the code table for each symbol. That is fine for small alphabets but not optimized for speed.
 - If the input is a single repeated symbol, that symbol gets a one-bit code.
 - An empty input file produces no code tables, so it cannot be decompressed.
+
+---
+
+## 👥 Team
+
+<div align="center">
+
+<img src="assets/team.svg" alt="Team: Badr Rafik, Kareem Ahmed, Mohamed Saed" width="100%"/>
+
+**Badr Rafik** · **Kareem Ahmed** · **Mohamed Saed**
+
+</div>
 
 ---
 
