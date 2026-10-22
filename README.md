@@ -1,4 +1,4 @@
-# Modified Huffman Coder
+# Modified Huffman Code
 
 A Python command-line tool that compresses and decompresses text files using a **modified Huffman coding** scheme. With the probability threshold set to `0` it behaves as standard Huffman coding. With a higher threshold, rare symbols are grouped under a single `Others` code followed by a fixed-length code, which keeps the Huffman tree small.
 
