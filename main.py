@@ -1,527 +1,329 @@
 import heapq
-import json
-import os
-import struct
 from collections import Counter
+import math
+import os
+import json
+from typing import Dict, List, Tuple, Any
 
 
-def add_txt_extension(filename):
-    filename = filename.strip().strip('"')
+class Node:
 
-    if not filename.lower().endswith(".txt"):
-        filename += ".txt"
+    def __init__(self, symbol: Any, freq: int, order: int = 0):
+        self.symbol = symbol
+        self.freq = freq
+        self.order = order
+        self.left = None
+        self.right = None
 
-    return filename
-
-
-# ==========================================
-# 1. READ FILE
-# ==========================================
-
-def read_file(filename):
-    with open(filename, "rb") as file:
-        return file.read()
+    def __lt__(self, other: 'Node') -> bool:
+        if self.freq != other.freq:
+            return self.freq < other.freq
+        return self.order < other.order
 
 
-# ==========================================
-# 2. CALCULATE FREQUENCIES
-# ==========================================
+class ModifiedHuffmanCoder:
 
-def calculate_frequencies(data):
-    return Counter(data)
+    def __init__(self, prob_threshold: float = 0.0):
+        self.prob_threshold = prob_threshold
+        self.original_codes: Dict[str, str] = {}
+        self.huffman_codes: Dict[str, str] = {}
+        self.others_huffman_code: str = ""
+        self.inverse_huffman: Dict[str, str] = {}
+        self.inverse_original: Dict[str, str] = {}
 
+    def fit_and_encode(self, text: str) -> Tuple[str, Dict[str, Any]]:
+        total_symbols = len(text)
+        if total_symbols == 0:
+            return "", {}
 
-# ==========================================
-# 3. BUILD HUFFMAN TREE
-# ==========================================
+        frequencies = Counter(text)
 
-def build_huffman_tree(frequencies):
-    heap = []
-    counter = 0
+        sorted_symbols = sorted(frequencies.keys())
+        bits_needed = max(1, math.ceil(math.log2(len(sorted_symbols))))
 
-    for symbol, frequency in frequencies.items():
+        for idx, sym in enumerate(sorted_symbols):
+            self.original_codes[sym] = bin(idx)[2:].zfill(bits_needed)
+            self.inverse_original[self.original_codes[sym]] = sym
 
-        node = {
-            "symbol": symbol,
-            "left": None,
-            "right": None
+        regular_symbols: Dict[str, int] = {}
+        others_symbols: List[str] = []
+        others_freq = 0
+
+        for sym, freq in frequencies.items():
+            prob = freq / total_symbols
+            if prob <= self.prob_threshold:
+                others_symbols.append(sym)
+                others_freq += freq
+            else:
+                regular_symbols[sym] = freq
+
+        counter = 0
+        heap: List[Node] = []
+        for sym, freq in regular_symbols.items():
+            heap.append(Node(sym, freq, counter))
+            counter += 1
+
+        if others_freq > 0:
+            heap.append(Node("Others", others_freq, counter))
+            counter += 1
+
+        heapq.heapify(heap)
+
+        if len(heap) == 1:
+            node = heapq.heappop(heap)
+            root = Node(None, node.freq, counter)
+            counter += 1
+            root.left = node
+            heapq.heappush(heap, root)
+
+        while len(heap) > 1:
+            left = heapq.heappop(heap)
+            right = heapq.heappop(heap)
+
+            merged = Node(None, left.freq + right.freq, counter)
+            counter += 1
+            merged.left = left
+            merged.right = right
+
+            heapq.heappush(heap, merged)
+
+        root = heap[0] if heap else None
+
+        def generate_codes(node: Node, current_code: str = "") -> None:
+            if node is None:
+                return
+            if node.symbol is not None:
+                if node.symbol == "Others":
+                    self.others_huffman_code = current_code
+                else:
+                    self.huffman_codes[node.symbol] = current_code
+                return
+
+            generate_codes(node.left, current_code + "0")
+            generate_codes(node.right, current_code + "1")
+
+        generate_codes(root)
+
+        for sym, code in self.huffman_codes.items():
+            self.inverse_huffman[code] = sym
+
+        encoded_bits = []
+        for char in text:
+            if char in self.huffman_codes:
+                encoded_bits.append(self.huffman_codes[char])
+            else:
+                code = self.others_huffman_code + self.original_codes[char]
+                encoded_bits.append(code)
+
+        bit_string = "".join(encoded_bits)
+        metadata = {
+            "huffman_codes": self.huffman_codes,
+            "others_code": self.others_huffman_code,
+            "original_codes": self.original_codes,
+            "others_symbols": others_symbols,
+            "prob_threshold": self.prob_threshold
         }
 
-        heapq.heappush(
-            heap,
-            (frequency, counter, node)
-        )
+        return bit_string, metadata
 
-        counter += 1
+    def decode(self, encoded_str: str) -> str:
+        decoded_text = []
+        i = 0
+        n = len(encoded_str)
 
-    if not heap:
-        return None
+        while i < n:
+            matched = False
+            for code, sym in self.inverse_huffman.items():
+                if encoded_str.startswith(code, i):
+                    decoded_text.append(sym)
+                    i += len(code)
+                    matched = True
+                    break
 
-    while len(heap) > 1:
+            if matched:
+                continue
 
-        freq1, _, left = heapq.heappop(heap)
-        freq2, _, right = heapq.heappop(heap)
+            if self.others_huffman_code and encoded_str.startswith(self.others_huffman_code, i):
+                i += len(self.others_huffman_code)
+                sample_len = len(list(self.original_codes.values())[0])
+                orig_bits = encoded_str[i:i + sample_len]
+                original_char = self.inverse_original.get(orig_bits)
 
-        parent = {
-            "symbol": None,
-            "left": left,
-            "right": right
+                if original_char is None:
+                    raise ValueError(f"Decoding error: Unknown fixed-length code '{orig_bits}' found.")
+
+                decoded_text.append(original_char)
+                i += sample_len
+            else:
+                raise ValueError(f"Decoding error at bit index {i}: Invalid bitstream pattern.")
+
+        return "".join(decoded_text)
+
+
+def _normalize_filename(name: str, default_ext: str) -> str:
+    name = name.strip()
+    if not name:
+        return ""
+    root, ext = os.path.splitext(name)
+    if not ext:
+        return name + default_ext
+    return name
+
+
+def compress_file(input_filename: str, bin_output_filename: str, txt_output_filename: str, prob_threshold: float) -> None:
+    input_filename = _normalize_filename(input_filename, ".txt")
+    bin_output_filename = _normalize_filename(bin_output_filename, ".bin")
+    txt_output_filename = _normalize_filename(txt_output_filename, ".txt")
+
+    if not os.path.exists(input_filename):
+        print(f"Error: Input file '{input_filename}' not found.")
+        return
+
+    with open(input_filename, 'r', encoding='utf-8') as f:
+        text_data = f.read()
+
+    print(f"\nCompressing '{input_filename}' with probability threshold {prob_threshold}...")
+    coder = ModifiedHuffmanCoder(prob_threshold=prob_threshold)
+    bit_string, metadata = coder.fit_and_encode(text_data)
+
+    padding_len = (8 - len(bit_string) % 8) % 8
+    padded_bits = bit_string + '0' * padding_len
+
+    byte_array = bytearray()
+    for i in range(0, len(padded_bits), 8):
+        byte_array.append(int(padded_bits[i:i+8], 2))
+
+    with open(bin_output_filename, 'wb') as f:
+        f.write(bytes(byte_array))
+
+    with open(txt_output_filename, 'w', encoding='utf-8') as f:
+        f.write("Modified Huffman Coding Summary\n")
+        f.write(f"Probability threshold used: {prob_threshold}\n")
+
+        f.write("Original Fixed-Length Codes:\n")
+        for sym, code in sorted(metadata["original_codes"].items()):
+            display_sym = repr(sym) if sym in ['\n', '\t', ' '] else sym
+            f.write(f"  {display_sym} : {code}\n")
+
+        f.write("\nGenerated Huffman Codes:\n")
+        for sym, code in sorted(metadata["huffman_codes"].items(), key=lambda x: str(x[0])):
+            display_sym = repr(sym) if sym in ['\n', '\t', ' '] else sym
+            f.write(f"  {display_sym} : {code}\n")
+
+        if metadata["others_code"]:
+            f.write(f"  Others : {metadata['others_code']} (covers symbols: {metadata['others_symbols']})\n")
+
+        f.write(f"\nEncoded bit string ({len(bit_string)} bits):\n{bit_string}\n")
+
+        payload = {
+            "original_codes": metadata["original_codes"],
+            "huffman_codes": metadata["huffman_codes"],
+            "others_huffman_code": metadata["others_code"],
+            "others_symbols": metadata["others_symbols"],
+            "padding_len": padding_len
         }
-
-        heapq.heappush(
-            heap,
-            (freq1 + freq2, counter, parent)
-        )
-
-        counter += 1
-
-    return heapq.heappop(heap)[2]
-
-
-# ==========================================
-# 4. GENERATE HUFFMAN CODES
-# ==========================================
-
-def generate_codes(root):
-    codes = {}
-
-    if root is None:
-        return codes
-
-    def traverse(node, code):
-
-        if node["symbol"] is not None:
-            codes[node["symbol"]] = code if code else "0"
-            return
-
-        traverse(node["left"], code + "0")
-        traverse(node["right"], code + "1")
-
-    traverse(root, "")
-
-    return codes
-
-
-# ==========================================
-# 5. BUILD MODIFIED HUFFMAN CODES
-# ==========================================
-
-def build_modified_codes(frequencies, limit):
-
-    total = sum(frequencies.values())
-
-    if total == 0:
-        return {}, set()
-
-    others = set()
-    grouped_frequencies = {}
-
-    for symbol, frequency in frequencies.items():
-
-        probability = frequency / total
-
-        if probability <= limit:
-            others.add(symbol)
-
-        else:
-            grouped_frequencies[f"B:{symbol}"] = frequency
-
-    if others:
-
-        grouped_frequencies["OTHERS"] = sum(
-            frequencies[symbol]
-            for symbol in others
-        )
-
-    root = build_huffman_tree(grouped_frequencies)
-
-    codes = generate_codes(root)
-
-    return codes, others
-
-
-# ==========================================
-# 6. ENCODE DATA
-# ==========================================
-
-def encode_data(data, codes, others):
-
-    bits = []
-
-    for symbol in data:
-
-        if symbol in others:
-
-            bits.append(codes["OTHERS"])
-
-            bits.append(
-                format(symbol, "08b")
-            )
-
-        else:
-
-            bits.append(
-                codes[f"B:{symbol}"]
-            )
-
-    return "".join(bits)
-
-
-# ==========================================
-# 7. PACK BITS INTO BYTES
-# ==========================================
-
-def pack_bits(bits):
-
-    padding = (8 - len(bits) % 8) % 8
-
-    padded_bits = bits + ("0" * padding)
-
-    packed_data = bytes(
-        int(padded_bits[i:i + 8], 2)
-        for i in range(0, len(padded_bits), 8)
-    )
-
-    return packed_data
-
-
-# ==========================================
-# 8. SAVE COMPRESSED FILE (.bin)
-# ==========================================
-
-def save_compressed_file(
-    filename,
-    codes,
-    original_size,
-    bits
-):
-
-    packed_data = pack_bits(bits)
-
-    header = {
-        "codes": codes,
-        "original_size": original_size,
-        "payload_bits": len(bits)
-    }
-
-    header_bytes = json.dumps(
-        header
-    ).encode("utf-8")
-
-    with open(filename, "wb") as file:
-
-        file.write(
-            struct.pack(">I", len(header_bytes))
-        )
-
-        file.write(header_bytes)
-
-        file.write(packed_data)
-
-
-# ==========================================
-# 8.1 SAVE / READ BINARY TEXT FILE (_bits.txt)
-# ==========================================
-
-def save_bits_text_file(filename, codes, original_size, bits):
-
-    header = {
-        "codes": codes,
-        "original_size": original_size,
-        "payload_bits": len(bits)
-    }
-
-    with open(filename, "w", encoding="utf-8") as file:
-        file.write(json.dumps(header) + "\n")   # line 1: codes table
-        file.write(bits)                        # line 2: 0101... as text
-
-
-def read_bits_text_file(filename):
-
-    with open(filename, "r", encoding="utf-8") as file:
-        header = json.loads(file.readline())
-        bits = file.read().strip()
-
-    if len(bits) != header["payload_bits"]:
-        raise ValueError("Bits length does not match header.")
-
-    return header, bits
-
-
-# ==========================================
-# 9. COMPRESSION FUNCTION
-# ==========================================
-
-def compress_file(input_filename, compressed_filename, limit):
-
-    data = read_file(input_filename)
-
-    frequencies = calculate_frequencies(data)
-
-    codes, others = build_modified_codes(
-        frequencies,
-        limit
-    )
-
-    bits = encode_data(
-        data,
-        codes,
-        others
-    )
-
-    save_compressed_file(
-        compressed_filename,
-        codes,
-        len(data),
-        bits
-    )
-
-    bits_txt_filename = os.path.splitext(compressed_filename)[0] + "_bits.txt"
-
-    save_bits_text_file(
-        bits_txt_filename,
-        codes,
-        len(data),
-        bits
-    )
-
-    print("\n========== Compression Results ==========")
-
-    print("Original size:", len(data), "bytes")
-
-    print("Compressed payload:", len(bits), "bits")
-
-    print("Different byte values:", len(frequencies))
-
-    print("Symbols in Others:", len(others))
-
-    print("Compressed file created:", compressed_filename)
-
-    print("Binary text file created:", bits_txt_filename)
-
-
-# ==========================================
-# 10. READ COMPRESSED FILE
-# ==========================================
-
-def read_compressed_file(filename):
-
-    with open(filename, "rb") as file:
-
-        header_size_data = file.read(4)
-
-        if len(header_size_data) != 4:
-            raise ValueError("Invalid compressed file.")
-
-        header_size = struct.unpack(
-            ">I",
-            header_size_data
-        )[0]
-
-        header_bytes = file.read(header_size)
-
-        if len(header_bytes) != header_size:
-            raise ValueError("Incomplete header.")
-
-        header = json.loads(
-            header_bytes.decode("utf-8")
-        )
-
-        packed_data = file.read()
-
-    return header, packed_data
-
-
-# ==========================================
-# 11. UNPACK BYTES INTO BITS
-# ==========================================
-
-def unpack_bits(packed_data, payload_bits):
-
-    bits = "".join(
-        format(byte, "08b")
-        for byte in packed_data
-    )
-
-    return bits[:payload_bits]
-
-
-# ==========================================
-# 12. BUILD DECODING TREE
-# ==========================================
-
-def build_decoding_tree(codes):
-
-    root = {}
-
-    for symbol, code in codes.items():
-
-        node = root
-
-        for bit in code:
-
-            if bit not in node:
-                node[bit] = {}
-
-            node = node[bit]
-
-        node["symbol"] = symbol
-
-    return root
-
-
-# ==========================================
-# 13. DECODE DATA
-# ==========================================
-
-def decode_data(bits, codes, original_size):
-
-    root = build_decoding_tree(codes)
-
-    output = bytearray()
-
-    index = 0
-
-    while index < len(bits) and len(output) < original_size:
-
-        node = root
-
-        while "symbol" not in node:
-
-            if index >= len(bits):
-                raise ValueError("Incomplete compressed data.")
-
-            bit = bits[index]
-
-            index += 1
-
-            if bit not in node:
-                raise ValueError("Invalid Huffman code.")
-
-            node = node[bit]
-
-        symbol = node["symbol"]
-
-        if symbol == "OTHERS":
-
-            if index + 8 > len(bits):
-                raise ValueError("Incomplete Others symbol.")
-
-            original_byte = int(
-                bits[index:index + 8],
-                2
-            )
-
-            index += 8
-
-            output.append(original_byte)
-
-        else:
-
-            original_byte = int(
-                symbol.split(":")[1]
-            )
-
-            output.append(original_byte)
-
-    if len(output) != original_size:
-        raise ValueError(
-            "Decoded size does not match original size."
-        )
-
-    return bytes(output)
-
-
-# ==========================================
-# 14. DECOMPRESSION FUNCTION
-# ==========================================
-
-def decompress_file(compressed_filename, output_filename):
-
-    if compressed_filename.lower().endswith(".txt"):
-        header, bits = read_bits_text_file(compressed_filename)
-    else:
-        header, packed_data = read_compressed_file(compressed_filename)
-        bits = unpack_bits(packed_data, header["payload_bits"])
-
-    data = decode_data(
-        bits,
-        header["codes"],
-        header["original_size"]
-    )
-
-    with open(output_filename, "wb") as file:
-        file.write(data)
-
-    print("\n========== Decompression Results ==========")
-
-    print("Recovered size:", len(data), "bytes")
-
-    print("Output file created:", output_filename)
-
-
-# ==========================================
-# 15. MAIN MENU
-# ==========================================
-
-def main():
+        f.write(f"\n--- DECODER PAYLOAD ---\n{json.dumps(payload, ensure_ascii=False)}")
+
+    original_size = os.path.getsize(input_filename)
+    compressed_size = os.path.getsize(bin_output_filename)
+    ratio = compressed_size / original_size if original_size > 0 else 0.0
+
+    print(f"Compression complete!")
+    print(f" - Binary stream saved to : '{bin_output_filename}'")
+    print(f" - Report saved to      : '{txt_output_filename}'")
+    print("-" * 50)
+    print(f"Original Size   : {original_size} bytes")
+    print(f"Compressed Size : {compressed_size} bytes (Binary file only)")
+    print(f"Compression Ratio (Compressed / Original): {ratio:.4f} ({ratio * 100:.2f}%)")
+    print("-" * 50)
+
+
+def decompress_file(bin_input_filename: str, txt_meta_filename: str, output_restored_filename: str) -> None:
+
+    bin_input_filename = _normalize_filename(bin_input_filename, ".bin")
+    txt_meta_filename = _normalize_filename(txt_meta_filename, ".txt")
+    output_restored_filename = _normalize_filename(output_restored_filename, ".txt")
+
+    if not os.path.exists(bin_input_filename):
+        print(f"Error: Binary file '{bin_input_filename}' not found.")
+        return
+    if not os.path.exists(txt_meta_filename):
+        print(f"Error: Report text file '{txt_meta_filename}' not found.")
+        return
+
+    with open(bin_input_filename, 'rb') as f:
+        byte_data = f.read()
+
+    payload = None
+    with open(txt_meta_filename, 'r', encoding='utf-8') as f:
+        content = f.read()
+        if "--- DECODER PAYLOAD ---" in content:
+            payload_str = content.split("--- DECODER PAYLOAD ---")[1].strip()
+            payload = json.loads(payload_str)
+
+    if not payload:
+        print("Error: Could not find decoder data inside the text file.")
+        return
+
+    coder = ModifiedHuffmanCoder()
+    coder.original_codes = payload["original_codes"]
+    coder.huffman_codes = payload["huffman_codes"]
+    coder.others_huffman_code = payload["others_huffman_code"]
+    coder.inverse_huffman = {v: k for k, v in coder.huffman_codes.items()}
+    coder.inverse_original = {v: k for k, v in coder.original_codes.items()}
+
+    bit_string = "".join(format(b, '08b') for b in byte_data)
+    padding_len = payload["padding_len"]
+    if padding_len > 0:
+        bit_string = bit_string[:-padding_len]
+
+    print(f"\nDecompressing using '{bin_input_filename}' and '{txt_meta_filename}'...")
+    try:
+        decoded_text = coder.decode(bit_string)
+        with open(output_restored_filename, 'w', encoding='utf-8') as f:
+            f.write(decoded_text)
+        print(f"Decompression complete! Restored text saved to '{output_restored_filename}'.")
+    except Exception as e:
+        print(f"Decompression failed: {e}")
+
+
+def main() -> None:
     while True:
-        print("\n========== Modified Huffman ==========")
+        print("\n==========================================")
+        print("      Modified Huffman Coder Menu         ")
+        print("==========================================")
         print("1. Compress a file")
         print("2. Decompress a file")
         print("3. Exit")
 
-        choice = input("Choose an option: ").strip()
+        choice = input("Choose an option (1, 2, or 3): ").strip()
 
-        try:
-            if choice == "1":
-                input_file = add_txt_extension(input("Original file name: "))
+        if choice == '1':
+            input_file = input("Enter input file name to compress: ")
+            bin_output = input("Enter output binary file name for compressed bits: ")
+            txt_output = input("Enter output report text file name: ")
 
-                compressed_file = input("Compressed file name: ").strip().strip('"')
+            try:
+                threshold_input = input("Enter Minimum Limit of Symbol Probabilities: ").strip()
+                prob_threshold = float(threshold_input)
+            except ValueError:
+                print("Invalid threshold value. Defaulting to 0.0.")
+                prob_threshold = 0.0
 
-                if not compressed_file.lower().endswith(".bin"):
-                    compressed_file += ".bin"
+            compress_file(input_file, bin_output, txt_output, prob_threshold)
 
-                limit = float(input("Probability limit (0 to 1): "))
+        elif choice == '2':
+            bin_input = input("Enter input binary compressed file name: ")
+            txt_input = input("Enter input report text file name: ")
+            output_restored = input("Enter output restored text file name: ")
+            decompress_file(bin_input, txt_input, output_restored)
 
-                if not 0 <= limit <= 1:
-                    print("Error: Limit must be between 0 and 1.")
-                    continue
+        elif choice == '3':
+            print("Exiting program. Goodbye!")
+            break
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3.")
 
-                if input_file == compressed_file:
-                    print("Error: File names must be different.")
-                    continue
-
-                compress_file(input_file, compressed_file, limit)
-
-            elif choice == "2":
-                compressed_file = input("Compressed file name: ").strip().strip('"')
-
-                if not compressed_file.lower().endswith((".bin", ".txt")):
-                    compressed_file += ".bin"
-
-                output_file = add_txt_extension(input("Output file name: "))
-
-                if compressed_file == output_file:
-                    print("Error: File names must be different.")
-                    continue
-
-                decompress_file(compressed_file, output_file)
-
-            elif choice == "3":
-                print("Goodbye!")
-                break
-
-            else:
-                print("Invalid choice. Enter 1, 2, or 3.")
-
-        except (FileNotFoundError, ValueError, OSError, KeyError, TypeError) as error:
-            print("Error:", error)
-
-
-# ==========================================
-# 16. START PROGRAM
-# ==========================================
 
 if __name__ == "__main__":
     main()
